@@ -1,27 +1,27 @@
-package sspanel_test
+package pmpanel_test
 
 import (
 	"fmt"
 	"testing"
 
 	"github.com/XrayR-project/XrayR/api"
-	"github.com/XrayR-project/XrayR/api/sspanel"
+	"github.com/XrayR-project/XrayR/api/pmpanel"
 )
 
 func CreateClient() api.API {
 	apiConfig := &api.Config{
-		APIHost:  "http://127.0.0.1:667",
-		Key:      "123",
-		NodeID:   3,
+		APIHost:  "http://webapi.yyds.me",
+		Key:      "123456",
+		NodeID:   4,
 		NodeType: "V2ray",
 	}
-	client := sspanel.New(apiConfig)
+	client := pmpanel.New(apiConfig)
 	return client
 }
 
-func TestGetV2rayNodeInfo(t *testing.T) {
+func TestGetV2rayNodeinfo(t *testing.T) {
 	client := CreateClient()
-
+	client.Debug()
 	nodeInfo, err := client.GetNodeInfo()
 	if err != nil {
 		t.Error(err)
@@ -29,14 +29,15 @@ func TestGetV2rayNodeInfo(t *testing.T) {
 	t.Log(nodeInfo)
 }
 
-func TestGetSSNodeInfo(t *testing.T) {
+func TestGetSSNodeinfo(t *testing.T) {
 	apiConfig := &api.Config{
-		APIHost:  "http://127.0.0.1:667",
-		Key:      "123",
-		NodeID:   64,
+		APIHost:  "http://webapi.yyds.me",
+		Key:      "123456",
+		NodeID:   1,
 		NodeType: "Shadowsocks",
 	}
-	client := sspanel.New(apiConfig)
+	client := pmpanel.New(apiConfig)
+	client.Debug()
 	nodeInfo, err := client.GetNodeInfo()
 	if err != nil {
 		t.Error(err)
@@ -44,14 +45,15 @@ func TestGetSSNodeInfo(t *testing.T) {
 	t.Log(nodeInfo)
 }
 
-func TestGetTrojanNodeInfo(t *testing.T) {
+func TestGetTrojanNodeinfo(t *testing.T) {
 	apiConfig := &api.Config{
-		APIHost:  "http://127.0.0.1:667",
-		Key:      "123",
-		NodeID:   72,
+		APIHost:  "http://webapi.yyds.me",
+		Key:      "123456",
+		NodeID:   1,
 		NodeType: "Trojan",
 	}
-	client := sspanel.New(apiConfig)
+	client := pmpanel.New(apiConfig)
+	client.Debug()
 	nodeInfo, err := client.GetNodeInfo()
 	if err != nil {
 		t.Error(err)
@@ -59,7 +61,7 @@ func TestGetTrojanNodeInfo(t *testing.T) {
 	t.Log(nodeInfo)
 }
 
-func TestGetSSInfo(t *testing.T) {
+func TestGetSSinfo(t *testing.T) {
 	client := CreateClient()
 
 	nodeInfo, err := client.GetNodeInfo()
@@ -148,8 +150,8 @@ func TestReportIllegal(t *testing.T) {
 	client := CreateClient()
 
 	detectResult := []api.DetectResult{
-		{UID: 1, RuleID: 2},
-		{UID: 1, RuleID: 3},
+		{1, 2},
+		{1, 3},
 	}
 	client.Debug()
 	err := client.ReportIllegal(&detectResult)
