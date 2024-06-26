@@ -11,9 +11,9 @@ cmd_type=""
 arch=$(uname -m)
 version="v1.0.0"
 latestVersion=''
-downloadUrl='https://github.com/AirGo-Official/XrayR_For_AirGo/releases/download/'
-apiUrl='https://api.github.com/repos/AirGo-Official/XrayR_For_AirGo/releases/latest'
-manageUrl='https://raw.githubusercontent.com/AirGo-Official/XrayR_For_AirGo/main/scripts/manage.sh'
+downloadUrl='https://github.com/shuangyu233/XrayR_For_AirGo/releases/download/'
+apiUrl='https://api.github.com/repos/shuangyu233/XrayR_For_AirGo/releases/latest'
+manageUrl='https://raw.githubusercontent.com/shuangyu233/XrayR_For_AirGo/main/scripts/manage.sh'
 bbrUrl='https://raw.githubusercontent.com/chiakge/Linux-NetSpeed/master/tcp.sh'
 ghproxy='https://mirror.ghproxy.com/'
 
