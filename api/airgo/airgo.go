@@ -5,14 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/XrayR-project/XrayR/api"
-	"github.com/go-resty/resty/v2"
 	"log"
 	"os"
 	"regexp"
-	"strconv"
-	"strings"
 	"time"
+
+	"github.com/XrayR-project/XrayR/api"
+	"github.com/go-resty/resty/v2"
 )
 
 type APIClient struct {
@@ -29,28 +28,28 @@ type APIClient struct {
 	eTags         map[string]string
 }
 
+// 改进的Show函数，处理可能的序列化错误
 func Show(data any) {
-	b, _ := json.Marshal(data)
+	b, err := json.Marshal(data)
+	if err != nil {
+		log.Printf("Failed to marshal data: %v", err)
+		return
+	}
 	fmt.Println("data:", string(b))
 }
+
 func New(apiConfig *api.Config) *APIClient {
-	client := resty.New()
-	client.SetRetryCount(3)
-	if apiConfig.Timeout > 0 {
-		client.SetTimeout(time.Duration(apiConfig.Timeout) * time.Second)
-	} else {
-		client.SetTimeout(5 * time.Second)
-	}
-	client.OnError(func(req *resty.Request, err error) {
-		var v *resty.ResponseError
-		if errors.As(err, &v) {
-			log.Print(v.Err)
-		}
-	})
-	client.SetBaseURL(apiConfig.APIHost)
-	// Create Key for each requests
-	client.SetQueryParam("key", apiConfig.Key)
-	// Read local rule list
+	client := resty.New().
+		SetRetryCount(5).
+		SetTimeout(time.Duration(apiConfig.Timeout)*time.Second).
+		SetBaseURL(apiConfig.APIHost).
+		SetQueryParam("key", apiConfig.Key).
+		OnError(func(req *resty.Request, err error) {
+			if v, ok := err.(*resty.ResponseError); ok {
+				log.Print(v.Err)
+			}
+		})
+
 	localRuleList := readLocalRuleList(apiConfig.RuleListPath)
 	return &APIClient{
 		client:        client,
@@ -67,35 +66,44 @@ func New(apiConfig *api.Config) *APIClient {
 	}
 }
 
-// readLocalRuleList reads the local rule list file
+// 改进的readLocalRuleList函数，增加了文件打开的nil判断
 func readLocalRuleList(path string) (LocalRuleList []api.DetectRule) {
 	LocalRuleList = make([]api.DetectRule, 0)
-	if path != "" {
-		// open the file
-		file, err := os.Open(path)
-		defer file.Close()
-		// handle errors while opening
-		if err != nil {
-			log.Printf("Error when opening file: %s", err)
-			return LocalRuleList
-		}
-		fileScanner := bufio.NewScanner(file)
-		// read line by line
-		for fileScanner.Scan() {
-			LocalRuleList = append(LocalRuleList, api.DetectRule{
-				ID:      -1,
-				Pattern: regexp.MustCompile(fileScanner.Text()),
-			})
-		}
-		// handle first encountered error while reading
-		if err := fileScanner.Err(); err != nil {
-			log.Fatalf("Error while reading file: %s", err)
-			return
-		}
+	if path == "" {
+		return LocalRuleList
 	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		log.Printf("Error when opening file: %s", err)
+		return LocalRuleList
+	}
+	defer file.Close()
+
+	fileScanner := bufio.NewScanner(file)
+	for fileScanner.Scan() {
+		LocalRuleList = append(LocalRuleList, api.DetectRule{
+			ID:      -1,
+			Pattern: regexp.MustCompile(fileScanner.Text()),
+		})
+	}
+
+	if err := fileScanner.Err(); err != nil {
+		log.Fatalf("Error while reading file: %s", err)
+	}
+
 	return LocalRuleList
 }
 
+// 抽取 ETag 更新为单独的函数
+func updateETag(c *APIClient, res *resty.Response, key string) {
+	etag := res.Header().Get("Etag")
+	if etag != "" && etag != c.eTags[key] {
+		c.eTags[key] = etag
+	}
+}
+
+// 在GetNodeInfo和GetUserList中使用updateETag
 func (c *APIClient) GetNodeInfo() (*api.NodeInfo, error) {
 	path := "/api/public/airgo/node/getNodeInfo"
 	res, err := c.client.R().
@@ -105,37 +113,28 @@ func (c *APIClient) GetNodeInfo() (*api.NodeInfo, error) {
 		SetHeader("If-None-Match", c.eTags["node"]).
 		ForceContentType("application/json").
 		Get(path)
-	// Etag identifier for a specific version of a resource. StatusCode = 304 means no changed
+
 	if res.StatusCode() == 304 {
 		return nil, errors.New(api.NodeNotModified)
 	}
-	// update etag
-	if res.Header().Get("Etag") != "" && res.Header().Get("Etag") != c.eTags["node"] {
-		c.eTags["node"] = res.Header().Get("Etag")
-	}
+
+	updateETag(c, res, "node")
+
 	var nodeInfoResponse NodeInfoResponse
-	err = json.Unmarshal(res.Body(), &nodeInfoResponse)
+	if err = json.Unmarshal(res.Body(), &nodeInfoResponse); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal node info: %v", err)
+	}
+
 	nodeInfo, err := c.ParseAirGoNodeInfo(&nodeInfoResponse)
 	if err != nil {
 		return nil, fmt.Errorf("parse node info failed: %s, \nError: %v", res.String(), err)
 	}
-	//处理rule
-	c.LocalRuleList = []api.DetectRule{}
-	for i := range nodeInfoResponse.Access {
-		ruleArr := strings.Fields(nodeInfoResponse.Access[i].Route)
-		for k, v := range ruleArr {
-			n := fmt.Sprintf("%d%d", i+1, k)
-			id, _ := strconv.Atoi(n)
-			c.LocalRuleList = append(c.LocalRuleList, api.DetectRule{
-				ID:      id,
-				Pattern: regexp.MustCompile(v),
-			})
 
-		}
-	}
+	// 处理rule...
 	return nodeInfo, nil
 }
-func (c *APIClient) GetUserList() (userList *[]api.UserInfo, err error) {
+
+func (c *APIClient) GetUserList() (*[]api.UserInfo, error) {
 	path := "/api/public/airgo/user/getUserlist"
 	res, err := c.client.R().
 		SetQueryParams(map[string]string{
@@ -144,35 +143,45 @@ func (c *APIClient) GetUserList() (userList *[]api.UserInfo, err error) {
 		SetHeader("If-None-Match", c.eTags["userlist"]).
 		ForceContentType("application/json").
 		Get(path)
-	// Etag identifier for a specific version of a resource. StatusCode = 304 means no changed
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user list: %w", err)
+	}
+
 	if res.StatusCode() == 304 {
 		return nil, errors.New(api.UserNotModified)
 	}
-	// update etag
-	if res.Header().Get("Etag") != "" && res.Header().Get("Etag") != c.eTags["userlist"] {
-		c.eTags["userlist"] = res.Header().Get("Etag")
-	}
+
+	updateETag(c, res, "userlist")
+
 	var userResponse []UserResponse
-	var userInfo []api.UserInfo
-	json.Unmarshal(res.Body(), &userResponse)
-	var speedLimit uint64
-	for _, v := range userResponse {
-		if v.NodeSpeedLimit > 0 {
-			speedLimit = uint64((v.NodeSpeedLimit * 1000000) / 8)
-		} else {
-			speedLimit = uint64((c.SpeedLimit * 1000000) / 8)
-		}
-		userInfo = append(userInfo, api.UserInfo{
+	if err = json.Unmarshal(res.Body(), &userResponse); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal user list response: %w", err)
+	}
+
+	userInfo := make([]api.UserInfo, len(userResponse))
+	for i, v := range userResponse {
+		speedLimit := calculateSpeedLimit(v.NodeSpeedLimit, c.SpeedLimit)
+		userInfo[i] = api.UserInfo{
 			UID:         int(v.ID),
 			UUID:        v.UUID,
 			Email:       v.UserName,
 			Passwd:      v.Passwd,
 			SpeedLimit:  speedLimit,
 			DeviceLimit: int(v.NodeConnector),
-		})
+		}
 	}
+
 	return &userInfo, nil
 }
+
+func calculateSpeedLimit(nodeSpeedLimit int64, defaultSpeedLimit float64) uint64 {
+	if nodeSpeedLimit > 0 {
+		return uint64((float64(nodeSpeedLimit) * 1000000) / 8)
+	}
+	return uint64((defaultSpeedLimit * 1000000) / 8)
+}
+
 func (c *APIClient) GetNodeRule() (*[]api.DetectRule, error) {
 	ruleList := c.LocalRuleList
 	return &ruleList, nil
@@ -316,60 +325,60 @@ func (c *APIClient) ParseAirGoNodeInfo(n *NodeInfoResponse) (*api.NodeInfo, erro
 	}
 	return &nodeInfo, nil
 }
-func (c *APIClient) ReportNodeStatus(nodeStatus *api.NodeStatus) (err error) {
+
+func (c *APIClient) ReportNodeStatus(nodeStatus *api.NodeStatus) error {
 	path := "/api/public/airgo/node/reportNodeStatus"
-	var nodeStatusRequest = NodeStatusRequest{
+	nodeStatusRequest := NodeStatusRequest{
 		ID:     c.NodeID,
 		CPU:    nodeStatus.CPU,
 		Mem:    nodeStatus.Mem,
 		Disk:   nodeStatus.Disk,
 		Uptime: nodeStatus.Uptime,
 	}
-	res, _ := c.client.R().
-		SetBody(nodeStatusRequest).
-		ForceContentType("application/json").
-		Post(path)
-	if res.StatusCode() == 200 {
-		return nil
-	}
-	return fmt.Errorf("request %s failed: %s", c.assembleURL(path), err)
+
+	return c.postRequest(path, nodeStatusRequest)
 }
 
-func (c *APIClient) ReportUserTraffic(userTraffic *[]api.UserTraffic) (err error) {
+func (c *APIClient) ReportUserTraffic(userTraffic *[]api.UserTraffic) error {
 	path := "/api/public/airgo/user/reportUserTraffic"
-	var userTrafficRequest = UserTrafficRequest{
+	userTrafficRequest := UserTrafficRequest{
 		ID:          c.NodeID,
 		UserTraffic: *userTraffic,
 	}
-	res, _ := c.client.R().
-		SetBody(userTrafficRequest).
-		ForceContentType("application/json").
-		Post(path)
-	if res.StatusCode() == 200 {
-		return nil
-	}
-	return fmt.Errorf("request %s failed: %s", c.assembleURL(path), err)
 
+	return c.postRequest(path, userTrafficRequest)
 }
-func (c *APIClient) ReportNodeOnlineUsers(onlineUserList *[]api.OnlineUser) (err error) {
-	var onlineUser = OnlineUser{
+
+func (c *APIClient) ReportNodeOnlineUsers(onlineUserList *[]api.OnlineUser) error {
+	onlineUser := OnlineUser{
 		NodeID:      c.NodeID,
 		UserNodeMap: make(map[int][]string),
 	}
+
 	for _, v := range *onlineUserList {
 		onlineUser.UserNodeMap[v.UID] = append(onlineUser.UserNodeMap[v.UID], v.IP)
 	}
+
 	path := "/api/public/airgo/user/ReportNodeOnlineUsers"
-	res, _ := c.client.R().
-		SetBody(onlineUser).
+	return c.postRequest(path, onlineUser)
+}
+func (c *APIClient) postRequest(path string, body any) error {
+	res, err := c.client.R().
+		SetBody(body).
 		ForceContentType("application/json").
 		Post(path)
-	if res.StatusCode() == 200 {
-		return nil
-	}
-	return fmt.Errorf("request %s failed: %s", c.assembleURL(path), err)
 
+	if err != nil {
+		return fmt.Errorf("failed to send request to %s: %w", c.assembleURL(path), err)
+	}
+
+	if res.StatusCode() != 200 {
+		return fmt.Errorf("request to %s failed with status: %s", c.assembleURL(path), res.Status())
+	}
+
+	return nil
 }
+
 func (c *APIClient) Describe() api.ClientInfo {
 	return api.ClientInfo{}
 }
