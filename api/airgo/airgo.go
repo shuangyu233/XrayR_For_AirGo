@@ -359,7 +359,7 @@ func (c *APIClient) ReportNodeOnlineUsers(onlineUserList *[]api.OnlineUser) erro
 		onlineUser.UserNodeMap[v.UID] = append(onlineUser.UserNodeMap[v.UID], v.IP)
 	}
 
-	path := "/api/public/airgo/user/ReportNodeOnlineUsers"
+	path := "/api/public/airgo/user/AGReportNodeOnlineUsers"
 	return c.postRequest(path, onlineUser)
 }
 func (c *APIClient) postRequest(path string, body any) error {
